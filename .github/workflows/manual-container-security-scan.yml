@@ -4,10 +4,10 @@ on:
   workflow_dispatch:
     inputs:
       container_image:
-        description: "Container image to scan (e.g., ghcr.io/neurodesk/julia:1.9.4)"
+        description: "Container image to scan (e.g., ghcr.io/neurodesk/julia_1.9.4:latest)"
         required: true
         type: string
-        default: "ghcr.io/neurodesk/julia:latest"
+        default: "ghcr.io/neurodesk/julia_1.9.4:latest"
       scanner_tool:
         description: "Vulnerability scanner to use"
         required: true
