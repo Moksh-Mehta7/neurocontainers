@@ -120,13 +120,13 @@ jobs:
             echo "has_changes=true" >> $GITHUB_OUTPUT
           fi
 
-      - name: Build changed containers
+      - name: Pull changed containers from GitHub Container Registry
         if: steps.detect-containers.outputs.has_changes == 'true'
         id: build-containers
         run: |
-          echo "Building changed containers for scanning..."
+          echo "Pulling changed containers from ghcr.io for scanning..."
 
-          built_images=""
+          pulled_images=""
 
           while IFS= read -r recipe; do
             if [ -z "$recipe" ]; then
@@ -135,23 +135,41 @@ jobs:
 
             echo "Processing recipe: $recipe"
 
-            # Check if recipe has build.yaml
+            # Check if recipe has build.yaml to get version info
             if [ -f "recipes/$recipe/build.yaml" ]; then
-              echo "Building container for $recipe using builder/build.py..."
+              echo "Extracting version info for $recipe from build.yaml..."
 
-              # Use the neurocontainers build system
-              if python builder/build.py generate "$recipe" --build; then
-                echo "Successfully built $recipe"
+              # Extract version from build.yaml
+              version=$(grep -E "^version:|^\s+version:" "recipes/$recipe/build.yaml" | head -1 | sed 's/.*version:\s*//' | tr -d '"' | tr -d "'" | xargs)
 
-                # Try to detect built image name (neurocontainers format)
-                image_name=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep "$recipe" | head -1)
+              if [ -z "$version" ]; then
+                echo "Warning: No version found in build.yaml for $recipe, skipping"
+                continue
+              fi
 
-                if [ -n "$image_name" ]; then
-                  echo "Built image: $image_name"
-                  built_images="${built_images}${image_name},"
-                fi
+              # Construct image name using neurodesk naming convention
+              # Format: ghcr.io/neurodesk/<recipe>_<version>:latest
+              # Example: ghcr.io/neurodesk/afni_25.2.03:latest
+              package_name="${recipe}_${version}"
+              image_name="ghcr.io/neurodesk/${package_name}:latest"
+
+              echo "Attempting to pull: $image_name"
+
+              # Pull the container from GitHub Container Registry
+              if docker pull "$image_name"; then
+                echo "Successfully pulled $image_name"
+                pulled_images="${pulled_images}${image_name},"
               else
-                echo "Warning: Failed to build $recipe"
+                echo "Warning: Failed to pull $image_name"
+                # Try alternative naming (without latest tag)
+                image_name="ghcr.io/neurodesk/${package_name}"
+                echo "Trying without tag: $image_name"
+                if docker pull "$image_name"; then
+                  echo "Successfully pulled $image_name"
+                  pulled_images="${pulled_images}${image_name},"
+                else
+                  echo "Warning: Failed to pull $recipe from ghcr.io/neurodesk"
+                fi
               fi
             else
               echo "No build.yaml found for $recipe, skipping"
@@ -159,13 +177,13 @@ jobs:
           done < ${{ env.TEMP_DIR }}/changed_recipes.txt
 
           # Remove trailing comma
-          built_images="${built_images%,}"
+          pulled_images="${pulled_images%,}"
 
-          echo "Built images: $built_images"
-          echo "built_images=$built_images" >> $GITHUB_OUTPUT
+          echo "Pulled images: $pulled_images"
+          echo "built_images=$pulled_images" >> $GITHUB_OUTPUT
 
-          if [ -z "$built_images" ]; then
-            echo "No images were successfully built"
+          if [ -z "$pulled_images" ]; then
+            echo "No images were successfully pulled"
             echo "has_built_images=false" >> $GITHUB_OUTPUT
           else
             echo "has_built_images=true" >> $GITHUB_OUTPUT

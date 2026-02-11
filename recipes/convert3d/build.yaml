@@ -25,3 +25,6 @@ deploy:
 
 categories:
   - "data organisation"
+
+readme: |-
+  Convert3D is a command-line tool for converting 3D images between common file formats.
