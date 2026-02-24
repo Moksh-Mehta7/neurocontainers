@@ -337,13 +337,14 @@ jobs:
           for match in grype_data.get('matches', []):
               sev = match.get('vulnerability', {}).get('severity', '').upper()
               if sev in ['CRITICAL', 'HIGH']:
+                  fix_versions = match.get('vulnerability', {}).get('fix', {}).get('versions', [])
                   high_priority.append({
                       'scanner': 'Grype',
                       'severity': sev,
                       'cve': match.get('vulnerability', {}).get('id', 'N/A'),
                       'package': match.get('artifact', {}).get('name', 'N/A'),
                       'version': match.get('artifact', {}).get('version', 'N/A'),
-                      'fixed': match.get('vulnerability', {}).get('fix', {}).get('versions', ['N/A'])[0]
+                      'fixed': fix_versions[0] if fix_versions else 'N/A'
                   })
           
           # Add Trivy Critical/High
@@ -357,12 +358,23 @@ jobs:
                           'cve': vuln.get('VulnerabilityID', 'N/A'),
                           'package': vuln.get('PkgName', 'N/A'),
                           'version': vuln.get('InstalledVersion', 'N/A'),
-                          'fixed': vuln.get('FixedVersion', 'N/A')
+                          'fixed': vuln.get('FixedVersion', 'N/A') or 'N/A'
                       })
           
           # Sort by severity (Critical first, then High)
           severity_order = {'CRITICAL': 0, 'HIGH': 1}
           high_priority.sort(key=lambda x: severity_order.get(x['severity'], 99))
+          
+          # Smart limiting to prevent 64KB issue
+          # Each row ~80 bytes, limit to max 400 rows to be safe (~32KB for table)
+          critical_vulns = [v for v in high_priority if v['severity'] == 'CRITICAL']
+          high_vulns = [v for v in high_priority if v['severity'] == 'HIGH']
+          
+          # Always show all Critical (usually only a few), limit High if needed
+          max_high_to_show = 400 - len(critical_vulns)
+          vulns_to_display = critical_vulns + high_vulns[:max_high_to_show]
+          
+          total_critical_high = len(high_priority)
           
           # Generate summary report
           print(f"""# Security Scan Findings
@@ -382,19 +394,28 @@ jobs:
           | Semgrep | {semgrep_total} | - | - | - | - |
           """)
           
-          # Show top 50 Critical/High vulnerabilities
+          # Show Critical/High vulnerabilities with smart limiting
           if high_priority:
               print(f"\n## Critical and High Severity Vulnerabilities\n")
+              
+              # Build summary message
+              if len(vulns_to_display) < total_critical_high:
+                  summary_msg = f"Showing {len(critical_vulns)} Critical and {len(high_vulns[:max_high_to_show])} High (total: {total_critical_high} Critical/High found)"
+              else:
+                  summary_msg = f"View {total_critical_high} Critical/High vulnerabilities"
+              
               print(f"<details>")
-              print(f"<summary>View {len(high_priority)} Critical/High vulnerabilities</summary>\n")
+              print(f"<summary>{summary_msg}</summary>\n")
               print("| Severity | CVE | Package | Version | Fixed In | Scanner |")
               print("|----------|-----|---------|---------|----------|---------|")
               
-              for vuln in high_priority[:50]:
+              for vuln in vulns_to_display:
                   print(f"| {vuln['severity']} | {vuln['cve']} | {vuln['package']} | {vuln['version']} | {vuln['fixed']} | {vuln['scanner']} |")
               
-              if len(high_priority) > 50:
-                  print(f"\n*Showing top 50 of {len(high_priority)} vulnerabilities. Download artifacts for complete results.*")
+              if len(vulns_to_display) < total_critical_high:
+                  remaining = total_critical_high - len(vulns_to_display)
+                  print(f"\n**Note:** {remaining} additional High severity vulnerabilities not shown to prevent issue size limits.")
+                  print("Download artifacts for complete results including all High severity findings.")
               
               print("\n</details>\n")
           
